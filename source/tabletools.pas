@@ -103,6 +103,7 @@ type
     editGenerateDataNullAmount: TEdit;
     updownGenerateDataNullAmount: TUpDown;
     menuInvertCheck: TMenuItem;
+    menuExportTransactions: TMenuItem;
     procedure FormCreate(Sender: TObject);
     procedure FormShow(Sender: TObject);
     procedure btnHelpMaintenanceClick(Sender: TObject);
@@ -128,7 +129,7 @@ type
     procedure ResultGridPaintText(Sender: TBaseVirtualTree; const TargetCanvas: TCanvas; Node: PVirtualNode;
       Column: TColumnIndex; TextType: TVSTTextType);
     procedure ValidateControls(Sender: TObject);
-    procedure SaveSettings(Sender: TObject);
+    procedure SaveSettings;
     procedure chkExportOptionClick(Sender: TObject);
     procedure btnExportOutputTargetSelectClick(Sender: TObject);
     procedure comboExportOutputTargetChange(Sender: TObject);
@@ -159,6 +160,7 @@ type
       Index: Integer; Rect: TRect; State: TOwnerDrawState);
     procedure comboExportOutputTypeMeasureItem(Control: TWinControl;
       Index: Integer; var Height: Integer);
+    procedure menuExportOptionClick(Sender: TObject);
   const
     StatusMsg = '%s %s ...';
   private
@@ -295,6 +297,7 @@ begin
   comboExportData.ItemIndex := AppSettings.ReadInt(asExportSQLDataHow);
   updownInsertSize.Position := AppSettings.ReadInt(asExportSQLDataInsertSize);
   menuExportAddComments.Checked := AppSettings.ReadBool(asExportSQLAddComments);
+  menuExportTransactions.Checked := AppSettings.ReadBool(asExportSQLTransactions);
   menuExportRemoveAutoIncrement.Checked := AppSettings.ReadBool(asExportSQLRemoveAutoIncrement);
   menuExportRemoveDefiner.Checked := AppSettings.ReadBool(asExportSQLRemoveDefiner);
   // Add hardcoded output options and session names from registry
@@ -539,11 +542,26 @@ begin
 end;
 
 
+procedure TfrmTableTools.menuExportOptionClick(Sender: TObject);
+var
+  i: Integer;
+  MenuItem: TMenuItem;
+begin
+  // Display number of checked options in button caption
+  i := 0;
+  for MenuItem in popupExportOptions.Items do begin
+    if MenuItem.Checked then
+      Inc(i);
+  end;
+  btnExportOptions.Caption := _('Options') + ' (' + i.ToString + ')';
+end;
+
 procedure TfrmTableTools.FormClose(Sender: TObject; var Action: TCloseAction);
 begin
   // Auto close temorary connection
   if Assigned(FTargetConnection) then
     FreeAndNil(FTargetConnection);
+  SaveSettings;
   // Save GUI setup
   AppSettings.WriteIntDpiAware(asTableToolsWindowWidth, Self, Width);
   AppSettings.WriteIntDpiAware(asTableToolsWindowHeight, Self, Height);
@@ -551,7 +569,7 @@ begin
 end;
 
 
-procedure TfrmTableTools.SaveSettings(Sender: TObject);
+procedure TfrmTableTools.SaveSettings;
 var
   i: Integer;
   Items: TStringList;
@@ -573,6 +591,7 @@ begin
       if comboExportData.ItemIndex > 0 then
         AppSettings.WriteInt(asExportSQLDataInsertSize, updownInsertSize.Position);
       AppSettings.WriteBool(asExportSQLAddComments, menuExportAddComments.Checked);
+      AppSettings.WriteBool(asExportSQLTransactions, menuExportTransactions.Checked);
       AppSettings.WriteBool(asExportSQLRemoveAutoIncrement, menuExportRemoveAutoIncrement.Checked);
       AppSettings.WriteBool(asExportSQLRemoveDefiner, menuExportRemoveDefiner.Checked);
 
@@ -629,6 +648,7 @@ begin
   TExtForm.PageControlTabHighlight(tabsTools);
   btnSeeResults.Visible := tabsTools.ActivePage = tabFind;
   lblCheckedSize.Caption := f_('Selected objects size: %s', [FormatByteNumber(FObjectSizes)]);
+  menuExportOptionClick(Sender);
   if tabsTools.ActivePage = tabMaintenance then begin
     btnExecute.Caption := _('Execute');
     btnExecute.Enabled := (Pos(_(SUnsupported), comboOperation.Text) = 0) and SomeChecked;
@@ -1025,7 +1045,6 @@ begin
   tabsTools.Enabled := True;
   treeObjects.Enabled := True;
   ValidateControls(Sender);
-  SaveSettings(Sender);
   Screen.Cursor := crDefault;
 end;
 
@@ -2042,6 +2061,8 @@ begin
         tmp := '~'+tmp+' ('+_('approximately')+')';
       if menuExportAddComments.Checked then
         Output('-- '+f_('Dumping data for table %s.%s: %s', [DBObj.Database, DBObj.Name, tmp])+CRLF, False, True, True, False, False);
+      if menuExportTransactions.Checked then
+        Output('BEGIN', True, True, True, True, True);
       TargetDbAndObject := Quoter.QuoteIdent(DBObj.Name);
       if ToDb then
         TargetDbAndObject := Quoter.QuoteIdent(FinalDbName) + '.' + TargetDbAndObject;
@@ -2064,9 +2085,6 @@ begin
       Limit := Round(100 * SIZE_MB / IfThen(DBObj.AvgRowLen>0, DBObj.AvgRowLen, AssumedAvgRowLen));
       if comboExportData.Text = DATA_REPLACE then
         Output('DELETE FROM '+TargetDbAndObject, True, True, True, True, True);
-      if DBObj.Engine.ToLowerInvariant <> 'innodb' then begin
-        Output('/*!40000 ALTER TABLE '+TargetDbAndObject+' DISABLE KEYS */', True, True, True, True, True);
-      end;
       while true do begin
         Data := DBObj.Connection.GetResults(
           DBObj.Connection.ApplyLimitClause(
@@ -2144,9 +2162,8 @@ begin
           break;
 
       end;
-      if DBObj.Engine.ToLowerInvariant <> 'innodb' then begin
-        Output('/*!40000 ALTER TABLE '+TargetDbAndObject+' ENABLE KEYS */', True, True, True, True, True);
-      end;
+      if menuExportTransactions.Checked then
+        Output('COMMIT', True, True, True, True, True);
       Output(CRLF, False, True, True, True, True);
       // Cosmetic fix for estimated InnoDB row count
       DBObj.Rows := RowCount;
